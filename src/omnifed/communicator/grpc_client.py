@@ -25,7 +25,6 @@ from . import AggregationOp, grpc_pb2, grpc_pb2_grpc
 from .utils import get_msg_info, proto_to_tensordict, tensordict_to_proto, proto_to_tensordict_extended
 from .compression.sparsification import *
 from .compression.quantization import *
-from .compression.lowrank_approximation import *
 from .utils import compress_message_tensors, extract_tensordict
 from ..utils import MetricLogger
 # from ..logger import Baselogger
