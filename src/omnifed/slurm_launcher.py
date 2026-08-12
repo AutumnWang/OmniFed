@@ -21,7 +21,7 @@ class SlurmConfig:
     time: str = "02:00:00"
     nodes: int = 2
     ntasks_per_node: int = 1
-    cpus_per_task: int = 8
+    cpus_per_task: int = 6
 
     # GPU options
     gres: Optional[str] = None
@@ -123,7 +123,8 @@ class SlurmOnlyLauncher:
         lines += sconf.sbatch_lines()
         lines += [
             "set -euo pipefail",
-            f'export PYTHONPATH="${{PYTHONPATH:-}}:{repo_root}"',
+            # f'export PYTHONPATH="${{PYTHONPATH:-}}:{repo_root}"',
+            f'export PYTHONPATH="{repo_root}:${{PYTHONPATH:-}}"',
             'export PYTHONUNBUFFERED=1',
             'export HYDRA_FULL_ERROR=1',
             'export OMNIFED_DEBUG=${OMNIFED_DEBUG:-0}',
