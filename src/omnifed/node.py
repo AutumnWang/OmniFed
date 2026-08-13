@@ -398,8 +398,11 @@ class Node(RequiredSetup):
     @property
     def device(self) -> torch.device:
         """Compute device with automatic GPU assignment based on rank."""
-        backend = getattr(self.local_comm, "backend", "gloo").lower()
-        use_cuda = (backend == "nccl") and torch.cuda.is_available()
+        # gloo is CUDA-capable for the only collectives TorchDistCommunicator issues
+        # (broadcast, all_reduce, barrier), so GPU placement follows the hardware
+        # rather than the backend. This is what lets several ranks share one GPU,
+        # which nccl rejects outright ("Duplicate GPU detected").
+        use_cuda = torch.cuda.is_available()
         if self.__device is None:
             if use_cuda:
                 self.__device = self.__resolve_device(
