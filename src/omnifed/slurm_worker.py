@@ -20,11 +20,26 @@ import threading
 from datetime import datetime
 
 def _first_host_from_nodelist() -> str:
-    out = subprocess.check_output(
-        ["scontrol", "show", "hostnames", os.environ["SLURM_NODELIST"]],
-        text=True,
-    )
-    return out.strip().splitlines()[0]
+    try:
+        out = subprocess.check_output(
+            ["scontrol", "show", "hostnames", os.environ["SLURM_NODELIST"]],
+            text=True,
+        )
+        return out.strip().splitlines()[0]
+    except Exception as e:
+        # `scontrol` is not always reachable from where the worker python runs
+        # (containers, sites without the Slurm client libs). The batch script
+        # exports MASTER_ADDR from the node where it *is* callable.
+        for env_key in ("MASTER_ADDR", "SLURMD_NODENAME", "HOSTNAME"):
+            host = os.environ.get(env_key)
+            if host:
+                print(
+                    f"[slurm_worker] scontrol unavailable ({e}); "
+                    f"using {env_key}={host} as master address",
+                    flush=True,
+                )
+                return host
+        raise
 
 
 def install_preemption_handlers(on_checkpoint):

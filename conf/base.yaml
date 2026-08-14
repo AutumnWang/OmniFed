@@ -153,10 +153,13 @@ slurm:
   exclusive: false
   constraint: null
   reservation: null
-  setup_lines:
-    # site modules/env (edit for Frontier/site)
-    - 'module load cray-python || true'
-    - 'export OMP_NUM_THREADS=8'
+  # Lines injected into the generated batch script before the tasks start
+  # (site modules, PYEXE, data dirs). Anything set here REPLACES the built-in
+  # Frontier defaults in ``engine.py``; leave empty to keep those.
+  setup_lines: []
+  # false = launch one background process per rank on a single node instead of
+  # ``srun`` (sites where step launch is unavailable). Single-node runs only.
+  use_srun: true
   # Parent Lustre dir for hybrid round checkpoints; use with ``experiment_id``.
   checkpoint_dir: null
   # Subdirectory under ``checkpoint_dir`` (stable across resubmits). See ``docs/CHECKPOINTING_HYBRID_SLURM_PLAN.md``.

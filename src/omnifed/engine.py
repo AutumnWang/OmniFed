@@ -338,8 +338,9 @@ class Engine(RequiredSetup):
                 # IMPORTANT: this python is only used before setup_lines runs
                 sconf.pyexe = "python"
 
-                # 4) Frontier / site environment (edit paths for your user + conda env)
-                sconf.setup_lines = [
+                # 4) Site environment. ``slurm.setup_lines`` wins when the config
+                # supplies any; the block below is the Frontier fallback.
+                sconf.setup_lines = list(sconf.setup_lines or []) or [
                     "module load PrgEnv-gnu/8.6.0",
                     "module load rocm/6.4.1",
                     "module load craype-accel-amd-gfx90a",

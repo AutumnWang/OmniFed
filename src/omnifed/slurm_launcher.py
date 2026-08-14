@@ -30,6 +30,9 @@ class SlurmConfig:
     gpu_bind: str = "closest"
 
     job_name: str = "omnifed"
+    # False = fan the tasks out with plain background processes on the single
+    # allocated node instead of ``srun`` (sites where step launch is unavailable).
+    use_srun: bool = True
     exclusive: bool = False
     constraint: Optional[str] = None
     reservation: Optional[str] = None
@@ -133,6 +136,11 @@ class SlurmOnlyLauncher:
         if sconf.setup_lines:
             lines += sconf.setup_lines + [""]
 
+        if not sconf.use_srun:
+            lines += SlurmOnlyLauncher._local_fanout_lines(sconf, pyexe, cfg_dir, payload_b64)
+            SlurmOnlyLauncher._write_and_submit(sconf, "\n".join(lines) + "\n")
+            return
+
         lines += [
             'echo "SLURM_JOB_ID=$SLURM_JOB_ID"',
             'echo "SLURM_NODELIST=$SLURM_NODELIST"',
@@ -168,8 +176,68 @@ class SlurmOnlyLauncher:
             "set +x",
         ]
 
-        script = "\n".join(lines) + "\n"
+        SlurmOnlyLauncher._write_and_submit(sconf, "\n".join(lines) + "\n")
 
+    @staticmethod
+    def _local_fanout_lines(
+        sconf: SlurmConfig, pyexe: str, cfg_dir: str, payload_b64: str
+    ) -> List[str]:
+        """
+        Task launch without ``srun``: one background process per rank on the single
+        allocated node, exporting the ``SLURM_*`` variables slurm_worker reads.
+
+        Only valid for a single-node allocation — srun is what crosses nodes.
+        """
+        ntasks = sconf.ntasks or (sconf.nodes * sconf.ntasks_per_node)
+        if sconf.nodes > 1 or ntasks > sconf.ntasks_per_node:
+            raise ValueError(
+                "slurm.use_srun=false launches tasks on one node only, but this run needs "
+                f"ntasks={ntasks} across nodes={sconf.nodes} (ntasks_per_node={sconf.ntasks_per_node}). "
+                "Fit the run on a single node or re-enable slurm.use_srun."
+            )
+
+        rank_log_dir = os.path.dirname(sconf.stdout) if sconf.stdout else cfg_dir
+
+        return [
+            'echo "SLURM_JOB_ID=$SLURM_JOB_ID"',
+            'echo "SLURM_NODELIST=$SLURM_NODELIST"',
+            'echo "Running on $(hostname)"',
+            'echo "PYTHONPATH=$PYTHONPATH"',
+            "",
+            f"mkdir -p {shlex.quote(cfg_dir)} {shlex.quote(rank_log_dir)}",
+            f'export OMNIFED_CFG_B64="{payload_b64}"',
+            f'echo "$OMNIFED_CFG_B64" | base64 -d > {shlex.quote(sconf.cfg_json_path)}',
+            "",
+            # slurm_worker reads MASTER_ADDR when `scontrol` is not callable from
+            # wherever the worker python lives (e.g. inside a container).
+            'export MASTER_ADDR="${MASTER_ADDR:-$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)}"',
+            f'export OMNIFED_NTASKS={ntasks}',
+            'echo "MASTER_ADDR=$MASTER_ADDR ntasks=$OMNIFED_NTASKS"',
+            'echo "Using worker python: ${PYEXE:-' + pyexe + '}"',
+            "",
+            'if [ -n "${ROCR_VISIBLE_DEVICES:-}" ] && [ -z "${HIP_VISIBLE_DEVICES:-}" ]; then',
+            '  export HIP_VISIBLE_DEVICES="$ROCR_VISIBLE_DEVICES"',
+            "fi",
+            "unset ROCR_VISIBLE_DEVICES || true",
+            "",
+            "pids=()",
+            'for r in $(seq 0 $((OMNIFED_NTASKS - 1))); do',
+            f'  rank_log="{rank_log_dir}/rank_${{r}}.log"',
+            '  echo "[launch] rank=$r -> $rank_log"',
+            "  SLURM_PROCID=$r SLURM_LOCALID=$r SLURM_NTASKS=$OMNIFED_NTASKS \\",
+            '    ${PYEXE:-' + pyexe + '} -u -m src.omnifed.slurm_worker '
+            f'--cfg-json {shlex.quote(sconf.cfg_json_path)} > "$rank_log" 2>&1 &',
+            "  pids+=($!)",
+            "done",
+            "",
+            "rc=0",
+            'for p in "${pids[@]}"; do wait "$p" || rc=$?; done',
+            f'echo "[launch] all ranks exited (rc=$rc); per-rank logs in {rank_log_dir}"',
+            'exit "$rc"',
+        ]
+
+    @staticmethod
+    def _write_and_submit(sconf: SlurmConfig, script: str) -> None:
         path = os.path.join(sconf.work_dir, "omnifed_slurm_only.sh")
         with open(path, "w") as f:
             f.write(script)
